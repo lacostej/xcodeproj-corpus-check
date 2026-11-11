@@ -9,10 +9,10 @@ For each project in `corpus.tsv` (public `project.pbxproj` files found by GitHub
 | `pbx-<lib>` | After Xcodeproj opens and saves the project, `xcodebuild -list -json` and `-showBuildSettings -json -alltargets` report the same as before |
 | `edit-<lib>` | After setting `CURRENT_PROJECT_VERSION=4242`, only settings that now contain 4242 changed |
 | `json` | Xcode 27.2 converts the project to `project.xcproj`; Xcodeproj with JSON support opens and saves it; Xcode reports the same |
-| `cross` | Xcode's JSON conversion of the Xcodeproj-saved project equals its conversion of the original |
+| `cross-<lib>` | Xcode's JSON conversion of the project saved by `<lib>` equals its conversion of the original. This also sees build phases, which `-list` and `-showBuildSettings` do not |
 
 Nothing is built, so no project's build scripts run. Resolving Swift packages downloads them and evaluates their `Package.swift`, which is why it only happens here, on a disposable runner (`ALLOW_PACKAGES=1`).
 
 Run: Actions → Corpus check → Run workflow. Results are uploaded as artifacts; `ruby scripts/summary.rb <folder>` prints the counts.
 
-Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","1057":"<lib>"}' 4`.
+Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","pr":"<lib>"}' 4`.

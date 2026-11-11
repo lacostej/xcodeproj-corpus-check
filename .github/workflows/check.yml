@@ -54,7 +54,7 @@ jobs:
       - name: Run
         run: |
           ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" \
-            "{\"master\":\"$PWD/libs/master/lib\",\"1057\":\"$PWD/libs/pr/lib\"}" 3 2> judge.log
+            "{\"master\":\"$PWD/libs/master/lib\",\"pr\":\"$PWD/libs/pr/lib\"}" 3 2> judge.log
           ruby scripts/summary.rb out/_results
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

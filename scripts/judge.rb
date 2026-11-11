@@ -2,10 +2,10 @@
 #   baseline : xcodebuild -list / -showBuildSettings on the untouched project
 #   pbx-<lib> : Xcodeproj <lib> opens and saves it; Xcode must report the same targets, schemes and build settings
 #   edit-<lib>: then sets CURRENT_PROJECT_VERSION=4242; only settings that now contain 4242 may change
-#   json      : Xcode 27.2 converts it to project.xcproj; #1057 opens and saves it; same checks; plus edit
-#   cross     : Xcode's JSON conversion of the #1057-saved pbxproj must equal its conversion of the original
+#   json      : Xcode 27.2 converts it to project.xcproj; the JSON-capable lib (JSON_LIB) opens and saves it; same checks; plus edit
+#   cross-<lib>: Xcode's JSON conversion of the <lib>-saved pbxproj must equal its conversion of the original
 # Swift package resolution is disabled and pointed at an empty folder per project; the folder is checked afterwards.
-# Usage: ruby judge.rb SRC OUT LIBS_JSON [JOBS] [LIMIT]   (LIBS_JSON: {"master":"<lib dir>","1057":"<lib dir>"})
+# Usage: ruby judge.rb SRC OUT LIBS_JSON [JOBS] [LIMIT]   (LIBS_JSON: {"master":"<lib dir>","pr":"<lib dir>"}; JSON_LIB names the label with JSON support, default pr)
 require 'json'
 require 'fileutils'
 require 'open3'
@@ -116,10 +116,10 @@ def judge(src_xcodeproj, name)
     err = xp(lib, proj, 'edit')
     r["edit-#{label}"] = err ? { verdict: 'xcodeproj-failed', error: err } : compare(after, xcode_view(proj), allow: '4242')
   end
-  # JSON format, #1057 only
-  if (lib = LIBS['1057'])
+  # JSON format, only with a lib that supports it
+  if (lib = LIBS[ENV.fetch('JSON_LIB', 'pr')])
     proj = fresh_copy(src_xcodeproj, File.join(base, 'json'))
-    out, st = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', proj])
+    out, st = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', proj, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(proj), '.dd')}"])
     xcproj = File.join(proj, 'project.xcproj')
     if st != :ok || !File.exist?(xcproj)
       r['json'] = { verdict: 'xcode-convert-failed', error: out.lines.grep(/error|•/).first(2).join.strip[0, 200] }
@@ -141,7 +141,7 @@ def judge(src_xcodeproj, name)
       next if r["pbx-#{label}"].is_a?(Hash) && r["pbx-#{label}"][:verdict] == 'xcodeproj-failed'
       cross = fresh_copy(src_xcodeproj, File.join(base, "cross-#{label}"))
       next if xp(l, cross, 'save')
-      _o, st2 = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', cross])
+      _o, st2 = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', cross, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(cross), '.dd')}"])
       cx = File.join(cross, 'project.xcproj')
       r["cross-#{label}"] = if st2 == :ok && File.exist?(cx)
                               a = File.read(cx).lines
