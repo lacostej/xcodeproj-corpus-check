@@ -1,0 +1,65 @@
+name: Corpus check
+
+# Opens and saves real Xcode projects with Xcodeproj and asks Xcode whether anything changed.
+# Runs only on demand. Swift packages are resolved here, on a disposable runner, never locally.
+on:
+  workflow_dispatch:
+    inputs:
+      only_packages:
+        description: 'Only projects that use Swift packages (1) or all (0)'
+        default: '1'
+      xcodeproj_pr:
+        description: 'CocoaPods/Xcodeproj PR to compare with master'
+        default: '1057'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: xcode-27
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      XCODE_DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      ALLOW_PACKAGES: '1'
+      ONLY_PACKAGES: ${{ inputs.only_packages }}
+      SHARD: ${{ matrix.shard }}/4
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
+        with:
+          ruby-version: '3.4'
+      - name: Xcode version
+        run: DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" xcodebuild -version
+      - name: Xcodeproj master and PR
+        env:
+          PR: ${{ inputs.xcodeproj_pr }}
+        run: |
+          gem install xcodeproj -v 1.28.1 --no-document   # brings the runtime dependencies
+          git clone --quiet https://github.com/CocoaPods/Xcodeproj.git xp
+          git -C xp fetch --quiet origin "pull/${PR}/head:pr"
+          mkdir -p libs/master libs/pr
+          git -C xp archive master lib | tar -x -C libs/master
+          git -C xp archive pr lib | tar -x -C libs/pr
+          echo "master $(git -C xp rev-parse --short master), PR #${PR} $(git -C xp rev-parse --short pr)"
+      - name: Fetch the project files
+        run: ruby scripts/fetch.rb corpus.tsv corpus
+      - name: Run
+        run: |
+          ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" \
+            "{\"master\":\"$PWD/libs/master/lib\",\"1057\":\"$PWD/libs/pr/lib\"}" 3 2> judge.log
+          ruby scripts/summary.rb out/_results
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: results-${{ matrix.shard }}
+          path: |
+            out/_results
+            judge.log
