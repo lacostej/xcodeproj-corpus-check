@@ -169,6 +169,11 @@ projects = projects.select { |p| File.read(File.join(p, 'project.pbxproj')).incl
 queue = Queue.new
 projects.each { |p| queue << p }
 FileUtils.mkdir_p(File.join(OUT, '_results'))
+$stdout.sync = true
+started = Time.now
+done = 0
+progress = Mutex.new
+puts "#{projects.size} projects, #{(JOBS || 4).to_i} at a time"
 workers = (JOBS || 4).to_i.times.map do
   Thread.new do
     while (p = (queue.pop(true) rescue nil))
@@ -179,7 +184,13 @@ workers = (JOBS || 4).to_i.times.map do
         { project: name, harness_error: "#{e.class}: #{e.message}" }
       end
       File.write(File.join(OUT, '_results', "#{name}.json"), JSON.pretty_generate(res))
-      warn "done #{name}"
+      # One progress line per project on stdout: count, elapsed time, and each check's verdict.
+      verdicts = res.filter_map { |k, v| "#{k}=#{v[:verdict]}" if v.is_a?(Hash) && v[:verdict] }
+      verdicts.unshift("harness-error: #{res[:harness_error]}") if res[:harness_error]
+      progress.synchronize do
+        done += 1
+        puts format('[%d/%d %dm] %s  %s', done, projects.size, (Time.now - started) / 60, name, verdicts.join(' '))
+      end
     end
   end
 end

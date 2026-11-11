@@ -52,10 +52,15 @@ jobs:
       - name: Fetch the project files
         run: ruby scripts/fetch.rb corpus.tsv corpus
       - name: Run
+        # One line per finished project goes to this log; Xcodeproj warnings go to judge.log (in the artifact).
         run: |
           ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" \
             "{\"master\":\"$PWD/libs/master/lib\",\"pr\":\"$PWD/libs/pr/lib\"}" 3 2> judge.log
+      - name: Summary
+        if: always()
+        run: |
           ruby scripts/summary.rb out/_results
+          ruby scripts/summary.rb out/_results --markdown "Shard $SHARD" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -63,3 +68,20 @@ jobs:
           path: |
             out/_results
             judge.log
+
+  report:
+    needs: check
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: results-*
+          path: results
+      - name: All shards
+        run: |
+          ruby scripts/summary.rb results
+          ruby scripts/summary.rb results --markdown >> "$GITHUB_STEP_SUMMARY"
