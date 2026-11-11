@@ -20,22 +20,26 @@ SAVE = File.join(__dir__, 'xp_save.rb')
 EXCLUDE = [/andrd3v__CVE/].freeze
 OUT_REAL = File.realpath(FileUtils.mkdir_p(OUT).first)
 
+# Returns [stdout + stderr, status, stdout alone]. JSON is parsed from stdout alone: package resolution
+# prints progress such as "[1/5] Fetching" on stderr, which broke parsing when the streams were merged.
 def run(cmd, env: {}, timeout: 180)
   out = +''
+  err = +''
   status = nil
-  Open3.popen2e({ 'DEVELOPER_DIR' => DEV }.merge(env), *cmd, in: :close) do |_i, oe, th|
-    reader = Thread.new { out << oe.read.to_s }
+  Open3.popen3({ 'DEVELOPER_DIR' => DEV }.merge(env), *cmd) do |i, o, e, th|
+    i.close
+    readers = [Thread.new { out << o.read.to_s }, Thread.new { err << e.read.to_s }]
     begin
       Timeout.timeout(timeout) { status = th.value }
     rescue Timeout::Error
       Process.kill('KILL', th.pid) rescue nil
       th.value
-      reader.join
-      return [out, :timeout]
+      readers.each(&:join)
+      return [err + out, :timeout, out]
     end
-    reader.join
+    readers.each(&:join)
   end
-  [out, status.success? ? :ok : status.exitstatus]
+  [err + out, status.success? ? :ok : status.exitstatus, out]
 end
 
 # Inside a copy dir only; refuse anything that would resolve outside OUT.
@@ -55,9 +59,9 @@ def xcode_view(proj)
   FileUtils.mkdir_p(pkgs)
   flags = ['-clonedSourcePackagesDirPath', pkgs]
   flags = ['-disableAutomaticPackageResolution', '-skipPackageUpdates'] + flags unless ALLOW_PACKAGES
-  list_out, list_st = run(['xcodebuild', '-list', '-json', '-project', proj] + flags)
-  bs_out, bs_st = run(['xcodebuild', '-showBuildSettings', '-json', '-alltargets', '-project', proj,
-                       "-IDECustomDerivedDataLocation=#{File.join(dir, '.dd')}"] + flags)
+  list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags)
+  bs_out, bs_st, bs_json = run(['xcodebuild', '-showBuildSettings', '-json', '-alltargets', '-project', proj,
+                                "-IDECustomDerivedDataLocation=#{File.join(dir, '.dd')}"] + flags)
   # xcodebuild reports /private/tmp paths as /tmp, so replace every spelling of the copy and its parent.
   spell = ->(p) { [File.realpath(p), p].flat_map { |x| [x, x.sub(%r{\A/private/}, '/')] }.uniq.sort_by { |x| -x.size } }
   norm = lambda do |s|
@@ -65,8 +69,8 @@ def xcode_view(proj)
     spell.(File.dirname(dir)).each { |x| s = s.gsub(x, '<BASE>') }
     s
   end
-  list = (JSON.parse(norm.(list_out[/\{.*\}/m] || '')) rescue nil)
-  settings = (JSON.parse(norm.(bs_out[/\[.*\]/m] || '')) rescue nil)
+  list = (JSON.parse(norm.(list_json[/\{.*\}/m] || '')) rescue nil)
+  settings = (JSON.parse(norm.(bs_json[/\[.*\]/m] || '')) rescue nil)
   {
     list_status: list_st, settings_status: bs_st,
     list: list && list['project'] && list['project'].slice('targets', 'configurations', 'schemes').transform_values(&:sort),
