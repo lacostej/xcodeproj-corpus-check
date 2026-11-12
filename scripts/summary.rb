@@ -35,6 +35,8 @@ if md
 else
   puts "projects: #{rs.size}, harness errors: #{rs.count { |r| r['harness_error'] }}"
   puts "readable by Xcode before any save: #{readable}"
+  reused = rs.count { |r| r['master_reused'] }
+  puts "master checks reused from an earlier run: #{reused}" if reused.positive?
   tallies.each { |k, t| puts "#{k.ljust(14)} #{t.map { |a, b| "#{a}=#{b}" }.join('  ')}" }
   diffs.each { |d| puts "  #{d.join('  ')}" }
   # Xcodeproj problems: what the milestone counts. Xcode's own limits (it cannot read the project before any save, or

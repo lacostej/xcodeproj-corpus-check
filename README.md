@@ -28,4 +28,6 @@ Nothing is built, so no project's build scripts run. Resolving Swift packages do
 
 Run: Actions → Corpus check → Run workflow. `projects` (a regular expression on project names) limits a run to some projects, e.g. to recheck the ones a fix is for. Results are uploaded as artifacts: one JSON file per project under `_results/`, with each check's verdict, error lines and duration, and the full output of every failing step under `_logs/`. `ruby scripts/summary.rb <folder>` prints the counts and the time spent per check.
 
+To save time: `shards` (default 8) splits the projects across that many runners. `master_from_run` takes an earlier run's ID and reuses its `master` checks for each project whose master inputs are unchanged (Xcodeproj master, the released Nanaimo, Ruby, Xcode, the corpus list and these scripts, recorded as `master_key` in each result); any other project is judged as usual. `json_edit: 0` skips the JSON edit check.
+
 Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","xcodeproj":"<lib>"}' 4`. A lib may be several load paths joined with `:`, e.g. `"<nanaimo>/lib:<xcodeproj>/lib"`.

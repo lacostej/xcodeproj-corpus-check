@@ -23,6 +23,17 @@ SAVE = File.join(__dir__, 'xp_save.rb')
 # ChimeHQ__Chime: depends on github.com/mattmassicotte/FuzzyFind, which no longer exists, so Xcode cannot read it.
 EXCLUDE = [/andrd3v__CVE/, %r{ChimeHQ__Chime/Edit\.xcodeproj}].freeze
 OUT_REAL = File.realpath(FileUtils.mkdir_p(OUT).first)
+# MASTER_FROM=<dir> holds an earlier run's results: a project's master checks are copied from there when its MASTER_KEY
+# (a digest of everything they depend on) is the same, instead of being judged again.
+MASTER_KEY = ENV.fetch('MASTER_KEY', '')
+MASTER_FROM = ENV.fetch('MASTER_FROM', '')
+EARLIER = MASTER_FROM.empty? ? {} : Dir.glob(File.join(MASTER_FROM, '**', '_results', '*.json')).to_h { |f| [File.basename(f, '.json'), f] }
+
+def earlier_master(name)
+  return nil if MASTER_KEY.empty? || !EARLIER.key?(name)
+  prev = JSON.parse(File.read(EARLIER[name]))
+  prev.slice('pbx-master', 'edit-master', 'cross-master') if prev['master_key'] == MASTER_KEY && prev['pbx-master']
+end
 
 # Full output of a failing step, so a failure never needs a rerun to be read. Returns the path relative to OUT.
 def save_log(name, step, text)
@@ -198,13 +209,17 @@ end
 def judge(src_xcodeproj, name)
   base = File.join(OUT, name)
   r = { project: name }
+  r[:master_key] = MASTER_KEY unless MASTER_KEY.empty?
   orig = fresh_copy(src_xcodeproj, File.join(base, 'baseline'))
   # The baseline fetches the packages into the cache the other checks share; a large one (aws-sdk-swift) needs minutes.
   before, secs = timed { xcode_view(orig, log_as: [name, 'baseline'], timeout: 900) }
   r[:baseline] = before.slice(:list_status, :settings_status, :error, :log, :packages_fetched).merge(targets: before[:settings]&.size, seconds: secs)
   # Every other check would time out too, at 3 minutes per Xcode call.
   return r if [before[:list_status], before[:settings_status]].include?(:timeout)
+  reused = LIBS.key?('master') && earlier_master(name)
+  r.merge!(reused, master_reused: true) if reused
   LIBS.each do |label, lib|
+    next if label == 'master' && reused
     proj = fresh_copy(src_xcodeproj, File.join(base, "pbx-#{label}"))
     after = nil # set inside the timed block, read by the edit step
     r["pbx-#{label}"], secs = timed do
@@ -243,7 +258,7 @@ def judge(src_xcodeproj, name)
         end
       end
       r['json'][:seconds] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).round(1)
-      unless err
+      if !err && ENV.fetch('JSON_EDIT', '1') == '1'
         r['json-edit'], secs = timed do
           err = xp(lib, proj, 'edit', log_as: [name, 'json-edit-xcodeproj'])
           err ? { verdict: 'xcodeproj-failed', error: err, log: "_logs/#{name}/json-edit-xcodeproj.log" } : compare(jafter, xcode_view(proj, log_as: [name, 'json-edit-xcode']), allow: '4242')
@@ -256,6 +271,7 @@ def judge(src_xcodeproj, name)
   # This sees build phases (copy destinations, scripts), which -list and -showBuildSettings do not show.
   if xcode_json
     LIBS.each do |label, l|
+      next if label == 'master' && reused
       next if r["pbx-#{label}"].is_a?(Hash) && r["pbx-#{label}"][:verdict] == 'xcodeproj-failed'
       cross = fresh_copy(src_xcodeproj, File.join(base, "cross-#{label}"))
       next if xp(l, cross, 'save', log_as: [name, "cross-#{label}-xcodeproj"])

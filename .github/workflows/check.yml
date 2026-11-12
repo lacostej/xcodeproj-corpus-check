@@ -23,23 +23,46 @@ on:
       projects:
         description: 'Only the projects whose name matches this regular expression, e.g. "There|bad_query"; empty: all'
         default: ''
+      master_from_run:
+        description: 'Reuse the master checks of this earlier run (its ID) for each project whose master inputs are unchanged; empty: judge master'
+        default: ''
+      shards:
+        description: 'Number of runners to split the projects across (1-20)'
+        default: '8'
+      json_edit:
+        description: 'Run the JSON edit check (1) or skip it (0)'
+        default: '1'
 
 permissions:
   contents: read
+  actions: read # gh run download, for master_from_run
 
 jobs:
+  shards:
+    runs-on: ubuntu-24.04
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - id: list
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          [[ "$SHARDS" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "shards must be 1-20, got $SHARDS"; exit 1; }
+          echo "list=$(jq -cn --argjson n "$SHARDS" '[range($n)]')" >> "$GITHUB_OUTPUT"
+
   check:
+    needs: shards
     runs-on: xcode-27
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: ${{ fromJSON(needs.shards.outputs.list) }}
     env:
       XCODE_DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       ALLOW_PACKAGES: '1'
       ONLY_PACKAGES: ${{ inputs.only_packages }}
-      SHARD: ${{ matrix.shard }}/4
+      SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +98,22 @@ jobs:
           git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
       - name: Fetch the project files
         run: ruby scripts/fetch.rb corpus.tsv corpus
+      - name: Master key
+        # A digest of everything the master checks depend on; master_from_run reuses a project's master checks only if it matches.
+        run: |
+          key="xcodeproj $(git -C xp rev-parse master) nanaimo $(ruby -e 'puts Gem::Specification.find_by_name("nanaimo").version') ruby $(ruby -e 'puts RUBY_VERSION')"
+          key+=" xcode $(DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" xcodebuild -version | tr '\n' ' ')"
+          key+=" files $(cat corpus.tsv scripts/judge.rb scripts/xp_save.rb scripts/fetch.rb | shasum -a 256 | cut -c1-16)"
+          echo "master inputs: $key"
+          echo "MASTER_KEY=$(printf '%s' "$key" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_ENV"
+      - name: Master results from an earlier run
+        if: inputs.master_from_run != ''
+        env:
+          RUN_ID: ${{ inputs.master_from_run }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "master_from_run must be a run ID, got $RUN_ID"; exit 1; }
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -p 'results-*' -D earlier
+          echo "MASTER_FROM=$PWD/earlier" >> "$GITHUB_ENV"
       - name: Run
         # One line per finished project goes to this log; Xcodeproj warnings go to judge.log (in the artifact).
         # Labels: master; nanaimo (Xcodeproj master + merged Nanaimo); xcodeproj (merged Xcodeproj); all (both merged).
@@ -82,6 +121,7 @@ jobs:
           JSON_LIB: ${{ inputs.json_lib }}
           PROJECTS: ${{ inputs.projects }}
           LABELS: ${{ inputs.labels }}
+          JSON_EDIT: ${{ inputs.json_edit }}
         run: |
           want() { [[ " $LABELS " == *" $1 "* ]]; }
           libs=()
