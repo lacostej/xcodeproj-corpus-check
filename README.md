@@ -24,6 +24,6 @@ Nothing is built, so no project's build scripts run. Resolving Swift packages do
 
 `json_lib` names the label that runs the `json` check (default `xcodeproj`; it needs a JSON-capable Xcodeproj, such as #1057 in `xcodeproj_prs`). PRs are merged by `scripts/merge_prs.sh`, in the order listed; see [resolutions/](resolutions/README.md) for conflicts.
 
-Run: Actions → Corpus check → Run workflow. Results are uploaded as artifacts; `ruby scripts/summary.rb <folder>` prints the counts.
+Run: Actions → Corpus check → Run workflow. `projects` (a regular expression on project names) limits a run to some projects, e.g. to recheck the ones a fix is for. Results are uploaded as artifacts: one JSON file per project under `_results/`, with each check's verdict, error lines and duration, and the full output of every failing step under `_logs/`. `ruby scripts/summary.rb <folder>` prints the counts and the time spent per check.
 
 Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","xcodeproj":"<lib>"}' 4`. A lib may be several load paths joined with `:`, e.g. `"<nanaimo>/lib:<xcodeproj>/lib"`.

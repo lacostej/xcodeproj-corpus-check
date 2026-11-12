@@ -17,6 +17,9 @@ on:
       json_lib:
         description: 'Label whose Xcodeproj opens the JSON format in the json check (xcodeproj or all); skipped if that label is absent'
         default: 'xcodeproj'
+      projects:
+        description: 'Only the projects whose name matches this regular expression, e.g. "There|bad_query"; empty: all'
+        default: ''
 
 permissions:
   contents: read
@@ -69,6 +72,7 @@ jobs:
         # Labels: master; nanaimo (Xcodeproj master + merged Nanaimo); xcodeproj (merged Xcodeproj); all (both merged).
         env:
           JSON_LIB: ${{ inputs.json_lib }}
+          PROJECTS: ${{ inputs.projects }}
         run: |
           libs=("master=$PWD/libs/master/lib")
           [ -d nanaimo ] && libs+=("nanaimo=$PWD/nanaimo/lib:$PWD/libs/master/lib")
@@ -88,6 +92,7 @@ jobs:
           name: results-${{ matrix.shard }}
           path: |
             out/_results
+            out/_logs
             judge.log
 
   report:

@@ -7,6 +7,8 @@
 # Swift package resolution is disabled and pointed at an empty folder per project; the folder is checked afterwards.
 # Usage: ruby judge.rb SRC OUT LIBS_JSON [JOBS] [LIMIT]   (LIBS_JSON: {"master":"<lib dir>","xcodeproj":"<lib dir>"}; JSON_LIB names the label with JSON support, default xcodeproj)
 # A lib may list several load paths separated by ':', e.g. "<nanaimo>/lib:<xcodeproj>/lib" to use a Nanaimo checkout.
+# PROJECTS=<regexp> keeps only the projects whose name matches. A failing step's full output goes to OUT/_logs/<project>/,
+# and each check records its duration in seconds.
 require 'json'
 require 'fileutils'
 require 'open3'
@@ -20,6 +22,29 @@ ALLOW_PACKAGES = ENV['ALLOW_PACKAGES'] == '1'
 SAVE = File.join(__dir__, 'xp_save.rb')
 EXCLUDE = [/andrd3v__CVE/].freeze
 OUT_REAL = File.realpath(FileUtils.mkdir_p(OUT).first)
+
+# Full output of a failing step, so a failure never needs a rerun to be read. Returns the path relative to OUT.
+def save_log(name, step, text)
+  rel = File.join('_logs', name, "#{step}.log")
+  FileUtils.mkdir_p(File.dirname(File.join(OUT, rel)))
+  File.write(File.join(OUT, rel), text.to_s.byteslice(-200_000, 200_000) || text.to_s)
+  rel
+end
+
+NOISE = /Writing error result bundle|^\s*$/.freeze
+
+# The lines that say what went wrong: each line with "error" and the lines after it, which carry the reason.
+def error_lines(text, context: 6)
+  lines = text.to_s.lines.map(&:rstrip).reject { |l| l =~ NOISE }
+  keep = []
+  lines.each_with_index { |l, i| keep.concat((i..i + context).to_a) if l =~ /error|•/i }
+  keep.uniq.select { |i| i < lines.size }.first(20).map { |i| lines[i] }.join("\n")[0, 1500]
+end
+
+def timed
+  t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  [yield, (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).round(1)]
+end
 
 # Returns [stdout + stderr, status, stdout alone]. JSON is parsed from stdout alone: package resolution
 # prints progress such as "[1/5] Fetching" on stderr, which broke parsing when the streams were merged.
@@ -53,7 +78,7 @@ def fresh_copy(src_xcodeproj, dir)
   File.join(dir, File.basename(src_xcodeproj))
 end
 
-def xcode_view(proj)
+def xcode_view(proj, log_as: nil)
   dir = File.dirname(proj)
   # With resolution on, all copies of one project share one package folder, so each package downloads once.
   pkgs = ALLOW_PACKAGES ? File.join(File.dirname(dir), '.pkgs') : File.join(dir, '.pkgs')
@@ -76,14 +101,15 @@ def xcode_view(proj)
     list_status: list_st, settings_status: bs_st,
     list: list && list['project'] && list['project'].slice('targets', 'configurations', 'schemes').transform_values(&:sort),
     settings: settings && settings.each_with_index.to_h { |e, i| ["#{e['target']}##{i}", e['buildSettings']] },
-    error: ([list_st, bs_st].any? { |s| s != :ok } ? (list_out + bs_out).lines.grep(/error/i).first(3).join : nil),
+    error: ([list_st, bs_st].any? { |s| s != :ok } ? error_lines(list_out + bs_out) : nil),
+    log: ([list_st, bs_st].any? { |s| s != :ok } && log_as ? save_log(*log_as, "== xcodebuild -list (#{list_st})\n#{list_out}\n== xcodebuild -showBuildSettings (#{bs_st})\n#{bs_out}") : nil),
     packages_fetched: Dir.glob(File.join(pkgs, '{checkouts,repositories}', '*')).size
   }
 end
 
 def compare(before, after, allow: nil)
   return { verdict: 'xcode-failed-before' } if before[:settings].nil? || before[:list].nil?
-  return { verdict: 'xcode-failed-after', error: after[:error] } if after[:settings].nil? || after[:list].nil?
+  return { verdict: 'xcode-failed-after', error: after[:error], log: after[:log] } if after[:settings].nil? || after[:list].nil?
   diffs = []
   diffs << { what: 'list', before: before[:list], after: after[:list] } unless before[:list] == after[:list]
   (before[:settings].keys | after[:settings].keys).each do |t|
@@ -102,9 +128,10 @@ def compare(before, after, allow: nil)
   { verdict: diffs.empty? ? 'same' : 'different', diffs: diffs.first(25), diff_count: diffs.size }
 end
 
-def xp(lib, proj, mode)
+def xp(lib, proj, mode, log_as: nil)
   out, st = run(['ruby', *lib.split(':').flat_map { |l| ['-I', l] }, SAVE, proj, mode], timeout: 300)
   return nil if st == :ok
+  save_log(*log_as, "exit #{st}\n#{out}") if log_as
   # xp_save prints one "xp_save error:" line for an exception; an abort, crash or timeout keeps the last lines.
   line = out.lines.find { |l| l.start_with?('xp_save error: ') }
   return line.delete_prefix('xp_save error: ').strip[0, 300] if line
@@ -115,31 +142,44 @@ def judge(src_xcodeproj, name)
   base = File.join(OUT, name)
   r = { project: name }
   orig = fresh_copy(src_xcodeproj, File.join(base, 'baseline'))
-  before = xcode_view(orig)
-  r[:baseline] = before.slice(:list_status, :settings_status, :error, :packages_fetched).merge(targets: before[:settings]&.size)
+  before, secs = timed { xcode_view(orig, log_as: [name, 'baseline']) }
+  r[:baseline] = before.slice(:list_status, :settings_status, :error, :log, :packages_fetched).merge(targets: before[:settings]&.size, seconds: secs)
   LIBS.each do |label, lib|
     proj = fresh_copy(src_xcodeproj, File.join(base, "pbx-#{label}"))
-    err = xp(lib, proj, 'save')
-    r["pbx-#{label}"] = err ? { verdict: 'xcodeproj-failed', error: err } : compare(before, after = xcode_view(proj))
-    next if err
-    err = xp(lib, proj, 'edit')
-    r["edit-#{label}"] = err ? { verdict: 'xcodeproj-failed', error: err } : compare(after, xcode_view(proj), allow: '4242')
+    after = nil # set inside the timed block, read by the edit step
+    r["pbx-#{label}"], secs = timed do
+      err = xp(lib, proj, 'save', log_as: [name, "pbx-#{label}-xcodeproj"])
+      err ? { verdict: 'xcodeproj-failed', error: err, log: "_logs/#{name}/pbx-#{label}-xcodeproj.log" } : compare(before, after = xcode_view(proj, log_as: [name, "pbx-#{label}-xcode"]))
+    end
+    r["pbx-#{label}"][:seconds] = secs
+    next if r["pbx-#{label}"][:verdict] == 'xcodeproj-failed'
+    r["edit-#{label}"], secs = timed do
+      err = xp(lib, proj, 'edit', log_as: [name, "edit-#{label}-xcodeproj"])
+      err ? { verdict: 'xcodeproj-failed', error: err, log: "_logs/#{name}/edit-#{label}-xcodeproj.log" } : compare(after, xcode_view(proj, log_as: [name, "edit-#{label}-xcode"]), allow: '4242')
+    end
+    r["edit-#{label}"][:seconds] = secs
   end
   # JSON format, only with a lib that supports it
   if (lib = LIBS[ENV.fetch('JSON_LIB', 'xcodeproj')])
     proj = fresh_copy(src_xcodeproj, File.join(base, 'json'))
+    t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     out, st = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', proj, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(proj), '.dd')}"])
     xcproj = File.join(proj, 'project.xcproj')
     if st != :ok || !File.exist?(xcproj)
-      r['json'] = { verdict: 'xcode-convert-failed', error: out.lines.grep(/error|•/).first(2).join.strip[0, 200] }
+      r['json'] = { verdict: 'xcode-convert-failed', error: error_lines(out), log: save_log(name, 'json-convert', "exit #{st}\n#{out}"),
+                    seconds: (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).round(1) }
     else
       xcode_json = File.read(xcproj)
-      jbefore = xcode_view(proj)
-      err = xp(lib, proj, 'save')
-      r['json'] = err ? { verdict: 'xcodeproj-failed', error: err } : compare(jbefore, jafter = xcode_view(proj)).merge(xcproj_identical: File.read(xcproj) == xcode_json)
+      jbefore = xcode_view(proj, log_as: [name, 'json-before'])
+      err = xp(lib, proj, 'save', log_as: [name, 'json-xcodeproj'])
+      r['json'] = err ? { verdict: 'xcodeproj-failed', error: err, log: "_logs/#{name}/json-xcodeproj.log" } : compare(jbefore, jafter = xcode_view(proj, log_as: [name, 'json-after'])).merge(xcproj_identical: File.read(xcproj) == xcode_json)
+      r['json'][:seconds] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).round(1)
       unless err
-        err = xp(lib, proj, 'edit')
-        r['json-edit'] = err ? { verdict: 'xcodeproj-failed', error: err } : compare(jafter, xcode_view(proj), allow: '4242')
+        r['json-edit'], secs = timed do
+          err = xp(lib, proj, 'edit', log_as: [name, 'json-edit-xcodeproj'])
+          err ? { verdict: 'xcodeproj-failed', error: err, log: "_logs/#{name}/json-edit-xcodeproj.log" } : compare(jafter, xcode_view(proj, log_as: [name, 'json-edit-xcode']), allow: '4242')
+        end
+        r['json-edit'][:seconds] = secs
       end
     end
   end
@@ -149,16 +189,17 @@ def judge(src_xcodeproj, name)
     LIBS.each do |label, l|
       next if r["pbx-#{label}"].is_a?(Hash) && r["pbx-#{label}"][:verdict] == 'xcodeproj-failed'
       cross = fresh_copy(src_xcodeproj, File.join(base, "cross-#{label}"))
-      next if xp(l, cross, 'save')
-      _o, st2 = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', cross, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(cross), '.dd')}"])
+      next if xp(l, cross, 'save', log_as: [name, "cross-#{label}-xcodeproj"])
+      (o2, st2), secs = timed { run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', cross, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(cross), '.dd')}"]) }
       cx = File.join(cross, 'project.xcproj')
       r["cross-#{label}"] = if st2 == :ok && File.exist?(cx)
                               a = File.read(cx).lines
                               b = xcode_json.lines
                               { verdict: a == b ? 'same' : 'different', only_in_xcode: (b - a).map(&:strip).first(8), only_after_xcodeproj: (a - b).map(&:strip).first(8) }
                             else
-                              { verdict: 'xcode-convert-failed' }
+                              { verdict: 'xcode-convert-failed', error: error_lines(o2), log: save_log(name, "cross-#{label}-convert", "exit #{st2}\n#{o2}") }
                             end
+      r["cross-#{label}"][:seconds] = secs
     end
   end
   r[:packages_fetched_total] = Dir.glob(File.join(base, '*', '.pkgs', '{checkouts,repositories}', '*')).size
@@ -168,6 +209,10 @@ end
 projects = Dir.glob(File.join(SRC, '**', '*.xcodeproj')).sort.reject { |p| EXCLUDE.any? { |re| p =~ re } }
 projects = projects.select { |p| File.exist?(File.join(p, 'project.pbxproj')) }
 projects = projects.first(LIMIT.to_i) if LIMIT && !LIMIT.empty?
+if (only = ENV['PROJECTS']) && !only.empty?
+  re = Regexp.new(only)
+  projects = projects.select { |p| p.sub("#{SRC}/", '').tr('/', '_') =~ re }
+end
 # SHARD=i/n keeps every n-th project starting at i, so several runners split the corpus.
 if (shard = ENV['SHARD']) && !shard.empty?
   i, n = shard.split('/').map(&:to_i)
@@ -190,7 +235,7 @@ workers = (JOBS || 4).to_i.times.map do
       res = begin
         judge(p, name)
       rescue StandardError => e
-        { project: name, harness_error: "#{e.class}: #{e.message}" }
+        { project: name, harness_error: "#{e.class}: #{e.message}", log: save_log(name, 'harness', (["#{e.class}: #{e.message}"] + e.backtrace.to_a).join("\n")) }
       end
       File.write(File.join(OUT, '_results', "#{name}.json"), JSON.pretty_generate(res))
       # One progress line per project on stdout: count, elapsed time, and each check's verdict.

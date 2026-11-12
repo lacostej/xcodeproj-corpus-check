@@ -37,4 +37,8 @@ else
   puts "readable by Xcode before any save: #{readable}"
   tallies.each { |k, t| puts "#{k.ljust(14)} #{t.map { |a, b| "#{a}=#{b}" }.join('  ')}" }
   diffs.each { |d| puts "  #{d.join('  ')}" }
+  # Seconds spent per check, summed over projects (recorded since judge.rb logs durations).
+  secs = Hash.new(0.0)
+  rs.each { |r| r.each { |k, v| secs[k] += v['seconds'].to_f if v.is_a?(Hash) && v['seconds'] } }
+  puts "seconds per check: #{secs.sort_by { |_, t| -t }.map { |k, t| "#{k}=#{t.round}" }.join('  ')}" unless secs.empty?
 end
