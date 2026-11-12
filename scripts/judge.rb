@@ -230,6 +230,15 @@ def judge(src_xcodeproj, name)
       jbefore = xcode_view(proj, log_as: [name, 'json-before'])
       err = xp(lib, proj, 'save', log_as: [name, 'json-xcodeproj'])
       r['json'] = err ? { verdict: 'xcodeproj-failed', error: err, log: "_logs/#{name}/json-xcodeproj.log" } : compare(jbefore, jafter = xcode_view(proj, log_as: [name, 'json-after'])).merge(xcproj_identical: File.read(xcproj) == xcode_json)
+      # Xcodeproj reads project.xcproj by having Xcode convert it back. When Xcode itself cannot, it is an Xcode limit.
+      if err
+        back = fresh_copy(src_xcodeproj, File.join(base, 'json-back'))
+        run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', back, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(back), '.dd')}"])
+        bout, bst = run(['xcodebuild', '-convert-project', 'Xcode 27.0', '-project', back, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(back), '.dd')}"])
+        if bst != :ok
+          r['json'] = { verdict: 'xcode-convert-back-failed', error: error_lines(bout), log: save_log(name, 'json-convert-back', "exit #{bst}\n#{bout}"), xcodeproj_error: err }
+        end
+      end
       r['json'][:seconds] = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t).round(1)
       unless err
         r['json-edit'], secs = timed do

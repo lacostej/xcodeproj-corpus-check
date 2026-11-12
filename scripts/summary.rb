@@ -37,6 +37,13 @@ else
   puts "readable by Xcode before any save: #{readable}"
   tallies.each { |k, t| puts "#{k.ljust(14)} #{t.map { |a, b| "#{a}=#{b}" }.join('  ')}" }
   diffs.each { |d| puts "  #{d.join('  ')}" }
+  # Xcodeproj problems: what the milestone counts. Xcode's own limits (it cannot read the project before any save, or
+  # convert it) are not.
+  problem = %w[xcodeproj-failed different xcode-failed-after]
+  probs = rs.flat_map { |r| r.select { |_, v| v.is_a?(Hash) && problem.include?(v['verdict']) }.keys }
+  by_label = probs.group_by { |k| k.start_with?('json') ? 'json' : k.sub(/\A[a-z]+-/, '') }
+  puts "Xcodeproj problems per label: #{by_label.sort.map { |l, ks| "#{l}=#{ks.size}" }.join(' ')}" unless by_label.empty?
+  puts 'Xcodeproj problems: none' if by_label.empty?
   # Seconds spent per check, summed over projects (recorded since judge.rb logs durations).
   secs = Hash.new(0.0)
   rs.each { |r| r.each { |k, v| secs[k] += v['seconds'].to_f if v.is_a?(Hash) && v['seconds'] } }
