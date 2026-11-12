@@ -14,9 +14,12 @@ on:
       nanaimo_prs:
         description: 'CocoaPods/Nanaimo PRs merged onto master, label "nanaimo" (Xcodeproj master with that Nanaimo); empty: none'
         default: ''
+      labels:
+        description: 'Labels to judge, among master nanaimo xcodeproj all; rerun the projects "all" fails with "nanaimo xcodeproj" to see which side causes it'
+        default: 'master all'
       json_lib:
-        description: 'Label whose Xcodeproj opens the JSON format in the json check (xcodeproj or all); skipped if that label is absent'
-        default: 'xcodeproj'
+        description: 'Label whose Xcodeproj opens the JSON format in the json check (all or xcodeproj); skipped if that label is absent'
+        default: 'all'
       projects:
         description: 'Only the projects whose name matches this regular expression, e.g. "There|bad_query"; empty: all'
         default: ''
@@ -78,11 +81,14 @@ jobs:
         env:
           JSON_LIB: ${{ inputs.json_lib }}
           PROJECTS: ${{ inputs.projects }}
+          LABELS: ${{ inputs.labels }}
         run: |
-          libs=("master=$PWD/libs/master/lib")
-          [ -d nanaimo ] && libs+=("nanaimo=$PWD/nanaimo/lib:$PWD/libs/master/lib")
-          [ -d xp-merged ] && libs+=("xcodeproj=$PWD/xp-merged/lib")
-          [ -d nanaimo ] && [ -d xp-merged ] && libs+=("all=$PWD/nanaimo/lib:$PWD/xp-merged/lib")
+          want() { [[ " $LABELS " == *" $1 "* ]]; }
+          libs=()
+          want master && libs+=("master=$PWD/libs/master/lib")
+          want nanaimo && [ -d nanaimo ] && libs+=("nanaimo=$PWD/nanaimo/lib:$PWD/libs/master/lib")
+          want xcodeproj && [ -d xp-merged ] && libs+=("xcodeproj=$PWD/xp-merged/lib")
+          want all && [ -d nanaimo ] && [ -d xp-merged ] && libs+=("all=$PWD/nanaimo/lib:$PWD/xp-merged/lib")
           LIBS=$(ruby -rjson -e 'puts ARGV.to_h { |a| a.split("=", 2) }.to_json' "${libs[@]}")
           echo "libs: $LIBS"
           ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" "$LIBS" 3 2> judge.log

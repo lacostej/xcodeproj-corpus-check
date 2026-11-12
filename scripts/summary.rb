@@ -44,6 +44,8 @@ else
   by_label = probs.group_by { |k| k.start_with?('json') ? 'json' : k.sub(/\A[a-z]+-/, '') }
   puts "Xcodeproj problems per label: #{by_label.sort.map { |l, ks| "#{l}=#{ks.size}" }.join(' ')}" unless by_label.empty?
   puts 'Xcodeproj problems: none' if by_label.empty?
+  failing = rs.select { |r| r.any? { |k, v| v.is_a?(Hash) && problem.include?(v['verdict']) && (k.end_with?('-all') || k.start_with?('json')) } }
+  puts "to see which side causes the \"all\" problems, rerun with labels \"nanaimo xcodeproj\" and projects: ^(#{failing.map { |r| Regexp.escape(r['project']) }.join('|')})$" unless failing.empty?
   # Seconds spent per check, summed over projects (recorded since judge.rb logs durations).
   secs = Hash.new(0.0)
   rs.each { |r| r.each { |k, v| secs[k] += v['seconds'].to_f if v.is_a?(Hash) && v['seconds'] } }

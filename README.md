@@ -17,12 +17,14 @@ Nothing is built, so no project's build scripts run. Resolving Swift packages do
 
 | Label | Xcodeproj | Nanaimo | When |
 |---|---|---|---|
-| `master` | master | released | always |
-| `nanaimo` | master | master + `nanaimo_prs` merged | `nanaimo_prs` is set |
-| `xcodeproj` | master + `xcodeproj_prs` merged | released | `xcodeproj_prs` is set |
-| `all` | master + `xcodeproj_prs` merged | master + `nanaimo_prs` merged | both are set |
+| `master` | master | released | listed in `labels` |
+| `nanaimo` | master | master + `nanaimo_prs` merged | listed, and `nanaimo_prs` is set |
+| `xcodeproj` | master + `xcodeproj_prs` merged | released | listed, and `xcodeproj_prs` is set |
+| `all` | master + `xcodeproj_prs` merged | master + `nanaimo_prs` merged | listed, and both are set |
 
-`json_lib` names the label that runs the `json` check (default `xcodeproj`; it needs a JSON-capable Xcodeproj, such as #1057 in `xcodeproj_prs`). PRs are merged by `scripts/merge_prs.sh`, in the order listed; see [resolutions/](resolutions/README.md) for conflicts.
+`labels` defaults to `master all`. When `all` has a problem, the summary prints a `projects` expression for those projects: rerun them with `labels: nanaimo xcodeproj` to see whether the Xcodeproj or the Nanaimo side causes it.
+
+`json_lib` names the label that runs the `json` check (default `all`; it needs a JSON-capable Xcodeproj, such as #1057 in `xcodeproj_prs`). PRs are merged by `scripts/merge_prs.sh`, in the order listed; see [resolutions/](resolutions/README.md) for conflicts.
 
 Run: Actions → Corpus check → Run workflow. `projects` (a regular expression on project names) limits a run to some projects, e.g. to recheck the ones a fix is for. Results are uploaded as artifacts: one JSON file per project under `_results/`, with each check's verdict, error lines and duration, and the full output of every failing step under `_logs/`. `ruby scripts/summary.rb <folder>` prints the counts and the time spent per check.
 
