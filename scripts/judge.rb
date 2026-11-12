@@ -112,7 +112,7 @@ def fresh_copy(src_xcodeproj, dir)
   raise "outside OUT: #{dir}" unless real_parent.start_with?(OUT_REAL)
   FileUtils.rm_rf(dir)
   stubs = local_package_stubs(File.read(File.join(src_xcodeproj, 'project.pbxproj')))
-  depth = stubs.keys.map { |p| p.scan('../').size }.max.to_i
+  depth = stubs.keys.map { |p| p.split('/').count('..') }.max.to_i
   home = File.join(dir, *(['nest'] * depth))
   FileUtils.mkdir_p(home)
   FileUtils.cp_r(src_xcodeproj, home)
@@ -132,7 +132,7 @@ def shared_packages_dir(proj)
   File.join(OUT_REAL, File.realpath(proj).delete_prefix(OUT_REAL + '/').split('/').first, '.pkgs')
 end
 
-def xcode_view(proj, log_as: nil)
+def xcode_view(proj, log_as: nil, timeout: 180)
   dir = File.dirname(proj)
   pkgs = ALLOW_PACKAGES ? shared_packages_dir(proj) : File.join(dir, '.pkgs')
   FileUtils.mkdir_p(pkgs)
@@ -140,11 +140,11 @@ def xcode_view(proj, log_as: nil)
   # The system git reads the runner's git config, which rewrites SSH package URLs (git@github.com:) to HTTPS.
   flags += ['-scmProvider', 'system'] if ALLOW_PACKAGES
   flags = ['-disableAutomaticPackageResolution', '-skipPackageUpdates'] + flags unless ALLOW_PACKAGES
-  list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags)
+  list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags, timeout: timeout)
   # A package fetch can fail once on the network ("Couldn't fetch updates from remote repositories"): retry once.
-  list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags) if ALLOW_PACKAGES && list_st != :ok && list_out.include?('Could not resolve package dependencies')
+  list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags, timeout: timeout) if ALLOW_PACKAGES && list_st != :ok && list_out.include?('Could not resolve package dependencies')
   bs_out, bs_st, bs_json = run(['xcodebuild', '-showBuildSettings', '-json', '-alltargets', '-project', proj,
-                                "-IDECustomDerivedDataLocation=#{File.join(dir, '.dd')}"] + flags)
+                                "-IDECustomDerivedDataLocation=#{File.join(dir, '.dd')}"] + flags, timeout: timeout)
   # xcodebuild reports /private/tmp paths as /tmp, so replace every spelling of the copy and its parent.
   spell = ->(p) { [File.realpath(p), p].flat_map { |x| [x, x.sub(%r{\A/private/}, '/')] }.uniq.sort_by { |x| -x.size } }
   norm = lambda do |s|
@@ -199,8 +199,11 @@ def judge(src_xcodeproj, name)
   base = File.join(OUT, name)
   r = { project: name }
   orig = fresh_copy(src_xcodeproj, File.join(base, 'baseline'))
-  before, secs = timed { xcode_view(orig, log_as: [name, 'baseline']) }
+  # The baseline fetches the packages into the cache the other checks share; a large one (aws-sdk-swift) needs minutes.
+  before, secs = timed { xcode_view(orig, log_as: [name, 'baseline'], timeout: 900) }
   r[:baseline] = before.slice(:list_status, :settings_status, :error, :log, :packages_fetched).merge(targets: before[:settings]&.size, seconds: secs)
+  # Every other check would time out too, at 3 minutes per Xcode call.
+  return r if [before[:list_status], before[:settings_status]].include?(:timeout)
   LIBS.each do |label, lib|
     proj = fresh_copy(src_xcodeproj, File.join(base, "pbx-#{label}"))
     after = nil # set inside the timed block, read by the edit step
