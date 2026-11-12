@@ -13,7 +13,13 @@ File.readlines(tsv, chomp: true).drop(1).each do |line|
   raise "path escapes #{out}: #{path}" unless dest.start_with?(out_real + '/')
   next if File.exist?(dest)
 
-  body, err, st = Open3.capture3('gh', 'api', "repos/#{repo}/git/blobs/#{sha}", '--jq', '.content')
+  body, err, st = nil
+  # A network error is retried: a project missing on one runner shifts that runner's shard.
+  3.times do |attempt|
+    sleep(5 * attempt)
+    body, err, st = Open3.capture3('gh', 'api', "repos/#{repo}/git/blobs/#{sha}", '--jq', '.content')
+    break if st.success?
+  end
   unless st.success?
     warn "skip #{repo} #{path}: #{err.strip}"
     failed += 1
@@ -23,3 +29,4 @@ File.readlines(tsv, chomp: true).drop(1).each do |line|
   File.binwrite(dest, Base64.decode64(body))
 end
 warn "fetch failures: #{failed}"
+exit 1 if failed.positive?
