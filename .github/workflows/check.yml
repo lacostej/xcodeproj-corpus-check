@@ -65,6 +65,11 @@ jobs:
           read -r -a nanaimo_prs <<< "$NANAIMO_PRS"
           if [ ${#xp_prs[@]} -gt 0 ]; then scripts/merge_prs.sh CocoaPods/Xcodeproj xp-merged "${xp_prs[@]}"; fi
           if [ ${#nanaimo_prs[@]} -gt 0 ]; then scripts/merge_prs.sh CocoaPods/Nanaimo nanaimo "${nanaimo_prs[@]}"; fi
+      - name: Read SSH package URLs over HTTPS
+        # Some projects pin packages as git@github.com:owner/repo; the runner has no SSH key for them.
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
       - name: Fetch the project files
         run: ruby scripts/fetch.rb corpus.tsv corpus
       - name: Run

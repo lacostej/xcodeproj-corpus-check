@@ -68,22 +68,72 @@ def run(cmd, env: {}, timeout: 180)
   [err + out, status.success? ? :ok : status.exitstatus, out]
 end
 
-# Inside a copy dir only; refuse anything that would resolve outside OUT.
+# Local Swift packages sit next to the project in its repository, which the corpus does not fetch. Each one gets a
+# stub Package.swift declaring the products the project uses, so that Xcode can resolve the package graph. A local
+# product names no package, so it goes to the package with its name, or else to the first one.
+def local_package_stubs(pbxproj)
+  pkgs = pbxproj.scan(/isa = XCLocalSwiftPackageReference;\s*relativePath = "?([^";]+)"?;/).flatten.uniq
+  return {} if pkgs.empty?
+  products = pbxproj.scan(/isa = XCSwiftPackageProductDependency;(.*?)\};/m).flatten
+                    .reject { |b| b.include?('package = ') }.filter_map { |b| b[/productName = "?([^";]+)"?;/, 1] }.uniq
+  stubs = pkgs.to_h { |p| [p, []] }
+  products.each { |n| stubs[pkgs.find { |p| File.basename(p).casecmp?(n) } || pkgs.first] << n }
+  stubs
+end
+
+def write_package_stub(dir, products)
+  # Xcode refuses a package without products ("contains no products"), so an unused one gets one named after it.
+  products = [File.basename(dir)] if products.empty?
+  targets = products.each_index.map { |i| "Stub#{i}" }
+  FileUtils.mkdir_p(dir)
+  File.write(File.join(dir, 'Package.swift'), <<~SWIFT)
+    // swift-tools-version:5.9
+    // Stub written by xcodeproj-corpus-check: the corpus has the project file only, not this local package.
+    import PackageDescription
+    let package = Package(
+      name: #{File.basename(dir).inspect},
+      products: [#{products.zip(targets).map { |p, t| ".library(name: #{p.inspect}, targets: [#{t.inspect}])" }.join(', ')}],
+      targets: [#{targets.map { |t| ".target(name: #{t.inspect}, path: #{"Sources/#{t}".inspect})" }.join(', ')}]
+    )
+  SWIFT
+  targets.each do |t|
+    FileUtils.mkdir_p(File.join(dir, 'Sources', t))
+    File.write(File.join(dir, 'Sources', t, "#{t}.swift"), "public enum #{t} {}\n")
+  end
+end
+
+# Inside a copy dir only; refuse anything that would resolve outside OUT. A project with local packages is copied as
+# many folders deep as its paths go up ("../"), so that the stubs land inside the copy dir too.
 def fresh_copy(src_xcodeproj, dir)
   real_parent = File.realpath(FileUtils.mkdir_p(File.dirname(dir)).first)
   raise "outside OUT: #{dir}" unless real_parent.start_with?(OUT_REAL)
   FileUtils.rm_rf(dir)
-  FileUtils.mkdir_p(dir)
-  FileUtils.cp_r(src_xcodeproj, dir)
-  File.join(dir, File.basename(src_xcodeproj))
+  stubs = local_package_stubs(File.read(File.join(src_xcodeproj, 'project.pbxproj')))
+  depth = stubs.keys.map { |p| p.scan('../').size }.max.to_i
+  home = File.join(dir, *(['nest'] * depth))
+  FileUtils.mkdir_p(home)
+  FileUtils.cp_r(src_xcodeproj, home)
+  stubs.each do |rel, products|
+    target = File.expand_path(rel, home)
+    inside = target == File.expand_path(dir) || target.start_with?(File.expand_path(dir) + '/')
+    raise "local package outside the copy: #{rel}" unless inside
+    write_package_stub(target, products) unless File.exist?(File.join(target, 'Package.swift'))
+  end
+  File.join(home, File.basename(src_xcodeproj))
+end
+
+# All copies of one project share one package folder, OUT/<project>/.pkgs, so each package downloads once.
+def shared_packages_dir(proj)
+  File.join(OUT_REAL, File.realpath(proj).delete_prefix(OUT_REAL + '/').split('/').first, '.pkgs')
 end
 
 def xcode_view(proj, log_as: nil)
   dir = File.dirname(proj)
-  # With resolution on, all copies of one project share one package folder, so each package downloads once.
-  pkgs = ALLOW_PACKAGES ? File.join(File.dirname(dir), '.pkgs') : File.join(dir, '.pkgs')
+  pkgs = ALLOW_PACKAGES ? shared_packages_dir(proj) : File.join(dir, '.pkgs')
   FileUtils.mkdir_p(pkgs)
   flags = ['-clonedSourcePackagesDirPath', pkgs]
+  # The system git reads the runner's git config, which rewrites SSH package URLs (git@github.com:) to HTTPS.
+  flags += ['-scmProvider', 'system'] if ALLOW_PACKAGES
   flags = ['-disableAutomaticPackageResolution', '-skipPackageUpdates'] + flags unless ALLOW_PACKAGES
   list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags)
   bs_out, bs_st, bs_json = run(['xcodebuild', '-showBuildSettings', '-json', '-alltargets', '-project', proj,
@@ -202,7 +252,7 @@ def judge(src_xcodeproj, name)
       r["cross-#{label}"][:seconds] = secs
     end
   end
-  r[:packages_fetched_total] = Dir.glob(File.join(base, '*', '.pkgs', '{checkouts,repositories}', '*')).size
+  r[:packages_fetched_total] = Dir.glob(File.join(base, '{.pkgs,*/.pkgs,*/**/.pkgs}', '{checkouts,repositories}', '*')).uniq.size
   r
 end
 
