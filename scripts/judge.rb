@@ -104,7 +104,11 @@ end
 
 def xp(lib, proj, mode)
   out, st = run(['ruby', *lib.split(':').flat_map { |l| ['-I', l] }, SAVE, proj, mode], timeout: 300)
-  st == :ok ? nil : out.lines.reject { |l| l.include?("doesn't know about") || l.include?('If this attribute') }.last(2).join.strip[0, 300]
+  return nil if st == :ok
+  # xp_save prints one "xp_save error:" line for an exception; an abort, crash or timeout keeps the last lines.
+  line = out.lines.find { |l| l.start_with?('xp_save error: ') }
+  return line.delete_prefix('xp_save error: ').strip[0, 300] if line
+  out.lines.reject { |l| l.include?("doesn't know about") || l.include?('If this attribute') }.last(2).join.strip[0, 300]
 end
 
 def judge(src_xcodeproj, name)
