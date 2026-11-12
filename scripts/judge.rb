@@ -20,7 +20,8 @@ DEV = ENV.fetch('XCODE_DEVELOPER_DIR', '/Applications/Xcode-27.2.0.app/Contents/
 # Resolving packages downloads them and evaluates their Package.swift: only on a disposable runner.
 ALLOW_PACKAGES = ENV['ALLOW_PACKAGES'] == '1'
 SAVE = File.join(__dir__, 'xp_save.rb')
-EXCLUDE = [/andrd3v__CVE/].freeze
+# ChimeHQ__Chime: depends on github.com/mattmassicotte/FuzzyFind, which no longer exists, so Xcode cannot read it.
+EXCLUDE = [/andrd3v__CVE/, %r{ChimeHQ__Chime/Edit\.xcodeproj}].freeze
 OUT_REAL = File.realpath(FileUtils.mkdir_p(OUT).first)
 
 # Full output of a failing step, so a failure never needs a rerun to be read. Returns the path relative to OUT.
@@ -81,17 +82,19 @@ def local_package_stubs(pbxproj)
   stubs
 end
 
-def write_package_stub(dir, products)
+# name: from the package's relative path, never from the copy dir, whose name differs between copies; Xcode lists
+# a scheme under it. Target names must be unique across all packages, so they start with the package name.
+def write_package_stub(dir, name, products)
   # Xcode refuses a package without products ("contains no products"), so an unused one gets one named after it.
-  products = [File.basename(dir)] if products.empty?
-  targets = products.each_index.map { |i| "Stub#{i}" }
+  products = [name] if products.empty?
+  targets = products.each_index.map { |i| "#{name.gsub(/[^A-Za-z0-9]/, '_')}Stub#{i}" }
   FileUtils.mkdir_p(dir)
   File.write(File.join(dir, 'Package.swift'), <<~SWIFT)
     // swift-tools-version:5.9
     // Stub written by xcodeproj-corpus-check: the corpus has the project file only, not this local package.
     import PackageDescription
     let package = Package(
-      name: #{File.basename(dir).inspect},
+      name: #{name.inspect},
       products: [#{products.zip(targets).map { |p, t| ".library(name: #{p.inspect}, targets: [#{t.inspect}])" }.join(', ')}],
       targets: [#{targets.map { |t| ".target(name: #{t.inspect}, path: #{"Sources/#{t}".inspect})" }.join(', ')}]
     )
@@ -117,7 +120,9 @@ def fresh_copy(src_xcodeproj, dir)
     target = File.expand_path(rel, home)
     inside = target == File.expand_path(dir) || target.start_with?(File.expand_path(dir) + '/')
     raise "local package outside the copy: #{rel}" unless inside
-    write_package_stub(target, products) unless File.exist?(File.join(target, 'Package.swift'))
+    name = File.basename(rel.chomp('/'))
+    name = 'LocalPackage' if ['.', '..', ''].include?(name)
+    write_package_stub(target, name, products) unless File.exist?(File.join(target, 'Package.swift'))
   end
   File.join(home, File.basename(src_xcodeproj))
 end
@@ -136,6 +141,8 @@ def xcode_view(proj, log_as: nil)
   flags += ['-scmProvider', 'system'] if ALLOW_PACKAGES
   flags = ['-disableAutomaticPackageResolution', '-skipPackageUpdates'] + flags unless ALLOW_PACKAGES
   list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags)
+  # A package fetch can fail once on the network ("Couldn't fetch updates from remote repositories"): retry once.
+  list_out, list_st, list_json = run(['xcodebuild', '-list', '-json', '-project', proj] + flags) if ALLOW_PACKAGES && list_st != :ok && list_out.include?('Could not resolve package dependencies')
   bs_out, bs_st, bs_json = run(['xcodebuild', '-showBuildSettings', '-json', '-alltargets', '-project', proj,
                                 "-IDECustomDerivedDataLocation=#{File.join(dir, '.dd')}"] + flags)
   # xcodebuild reports /private/tmp paths as /tmp, so replace every spelling of the copy and its parent.

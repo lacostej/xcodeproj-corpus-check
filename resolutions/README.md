@@ -8,6 +8,7 @@ merge them alone; a resolution recorded here, in git rerere's format (`<repo nam
 |---|---|---|
 | `Xcodeproj/a4cf2944…` | Xcodeproj #1059, then #1062 | #1059 moves `to_hash_as` and friends out of `PBXNativeTarget`; #1062's `remove_from_project` is added after them |
 | `Xcodeproj/0fdf3e8b…` | Xcodeproj #1027, then #1029 | the build phase exception set's `display_name` with both: `'Resources'` for a Resources phase (#1029), else the phase's name, else its UUID (#1027) |
+| `Xcodeproj/16733405…` | Xcodeproj #1029, #1065, #1066, then #1031 | #1031's `display_name` for the build phase exception set (Xcode's comment format), over #1027's and #1029's; #1029's Resources phases stay |
 
 To record one: run `scripts/merge_prs.sh` until it stops on the conflict, merge that PR by hand in the clone with
 `git -c rerere.enabled=true merge`, resolve, commit, and copy the new `preimage` and `postimage` from the clone's
