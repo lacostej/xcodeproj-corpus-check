@@ -11,6 +11,9 @@ on:
       xcodeproj_pr:
         description: 'CocoaPods/Xcodeproj PR to compare with master'
         default: '1057'
+      nanaimo_prs:
+        description: 'CocoaPods/Nanaimo PRs merged onto master, checked as label "nanaimo" (Xcodeproj master with that Nanaimo); empty: none'
+        default: ''
 
 permissions:
   contents: read
@@ -49,13 +52,37 @@ jobs:
           git -C xp archive master lib | tar -x -C libs/master
           git -C xp archive pr lib | tar -x -C libs/pr
           echo "master $(git -C xp rev-parse --short master), PR #${PR} $(git -C xp rev-parse --short pr)"
+      - name: Nanaimo master with PRs merged
+        if: inputs.nanaimo_prs != ''
+        env:
+          PRS: ${{ inputs.nanaimo_prs }}
+        # Only lib/ is used, so a conflict confined to spec/ keeps the side already merged; CHANGELOG.md merges by union.
+        run: |
+          git clone --quiet https://github.com/CocoaPods/Nanaimo.git nanaimo
+          echo 'CHANGELOG.md merge=union' > nanaimo.attributes
+          G=(git -C nanaimo -c core.attributesFile="$PWD/nanaimo.attributes" -c user.name=corpus -c user.email=corpus@localhost)
+          read -r -a nums <<< "$PRS"
+          for n in "${nums[@]}"; do
+            [[ $n =~ ^[0-9]+$ ]] || { echo "not a PR number: $n"; exit 1; }
+            git -C nanaimo fetch --quiet origin "pull/${n}/head:pr-${n}"
+            if ! "${G[@]}" merge --quiet --no-edit "pr-${n}"; then
+              conflicts=$(git -C nanaimo diff --name-only --diff-filter=U)
+              if grep -qv '^spec/' <<< "$conflicts"; then echo "Nanaimo #${n} conflicts outside spec/: $conflicts"; exit 1; fi
+              while IFS= read -r f; do git -C nanaimo checkout --ours -- "$f" && git -C nanaimo add -- "$f"; done <<< "$conflicts"
+              "${G[@]}" commit --quiet --no-edit
+              echo "Nanaimo #${n}: spec conflicts, kept the side already merged: $conflicts"
+            fi
+            echo "Nanaimo #${n} $(git -C nanaimo rev-parse --short "pr-${n}")"
+          done
+          echo "Nanaimo master $(git -C nanaimo rev-parse --short origin/master) + ${nums[*]/#/#}"
       - name: Fetch the project files
         run: ruby scripts/fetch.rb corpus.tsv corpus
       - name: Run
         # One line per finished project goes to this log; Xcodeproj warnings go to judge.log (in the artifact).
         run: |
-          ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" \
-            "{\"master\":\"$PWD/libs/master/lib\",\"pr\":\"$PWD/libs/pr/lib\"}" 3 2> judge.log
+          LIBS="{\"master\":\"$PWD/libs/master/lib\",\"pr\":\"$PWD/libs/pr/lib\""
+          [ -d nanaimo ] && LIBS="$LIBS,\"nanaimo\":\"$PWD/nanaimo/lib:$PWD/libs/master/lib\""
+          ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" "$LIBS}" 3 2> judge.log
       - name: Summary
         if: always()
         run: |

@@ -13,6 +13,8 @@ For each project in `corpus.tsv` (public `project.pbxproj` files found by GitHub
 
 Nothing is built, so no project's build scripts run. Resolving Swift packages downloads them and evaluates their `Package.swift`, which is why it only happens here, on a disposable runner (`ALLOW_PACKAGES=1`).
 
+`<lib>` is `master` and `pr` (Xcodeproj master and the PR in `xcodeproj_pr`, with the released Nanaimo), plus `nanaimo` when `nanaimo_prs` lists Nanaimo PRs: Xcodeproj master with Nanaimo master and those PRs merged.
+
 Run: Actions → Corpus check → Run workflow. Results are uploaded as artifacts; `ruby scripts/summary.rb <folder>` prints the counts.
 
-Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","pr":"<lib>"}' 4`.
+Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","pr":"<lib>"}' 4`. A lib may be several load paths joined with `:`, e.g. `"<nanaimo>/lib:<xcodeproj>/lib"`.

@@ -6,6 +6,7 @@
 #   cross-<lib>: Xcode's JSON conversion of the <lib>-saved pbxproj must equal its conversion of the original
 # Swift package resolution is disabled and pointed at an empty folder per project; the folder is checked afterwards.
 # Usage: ruby judge.rb SRC OUT LIBS_JSON [JOBS] [LIMIT]   (LIBS_JSON: {"master":"<lib dir>","pr":"<lib dir>"}; JSON_LIB names the label with JSON support, default pr)
+# A lib may list several load paths separated by ':', e.g. "<nanaimo>/lib:<xcodeproj>/lib" to use a Nanaimo checkout.
 require 'json'
 require 'fileutils'
 require 'open3'
@@ -102,7 +103,7 @@ def compare(before, after, allow: nil)
 end
 
 def xp(lib, proj, mode)
-  out, st = run(['ruby', '-I', lib, SAVE, proj, mode], timeout: 300)
+  out, st = run(['ruby', *lib.split(':').flat_map { |l| ['-I', l] }, SAVE, proj, mode], timeout: 300)
   st == :ok ? nil : out.lines.reject { |l| l.include?("doesn't know about") || l.include?('If this attribute') }.last(2).join.strip[0, 300]
 end
 
