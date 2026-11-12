@@ -5,7 +5,7 @@
 #   json      : Xcode 27.2 converts it to project.xcproj; the JSON-capable lib (JSON_LIB) opens and saves it; same checks; plus edit
 #   cross-<lib>: Xcode's JSON conversion of the <lib>-saved pbxproj must equal its conversion of the original
 # Swift package resolution is disabled and pointed at an empty folder per project; the folder is checked afterwards.
-# Usage: ruby judge.rb SRC OUT LIBS_JSON [JOBS] [LIMIT]   (LIBS_JSON: {"master":"<lib dir>","pr":"<lib dir>"}; JSON_LIB names the label with JSON support, default pr)
+# Usage: ruby judge.rb SRC OUT LIBS_JSON [JOBS] [LIMIT]   (LIBS_JSON: {"master":"<lib dir>","xcodeproj":"<lib dir>"}; JSON_LIB names the label with JSON support, default xcodeproj)
 # A lib may list several load paths separated by ':', e.g. "<nanaimo>/lib:<xcodeproj>/lib" to use a Nanaimo checkout.
 require 'json'
 require 'fileutils'
@@ -126,7 +126,7 @@ def judge(src_xcodeproj, name)
     r["edit-#{label}"] = err ? { verdict: 'xcodeproj-failed', error: err } : compare(after, xcode_view(proj), allow: '4242')
   end
   # JSON format, only with a lib that supports it
-  if (lib = LIBS[ENV.fetch('JSON_LIB', 'pr')])
+  if (lib = LIBS[ENV.fetch('JSON_LIB', 'xcodeproj')])
     proj = fresh_copy(src_xcodeproj, File.join(base, 'json'))
     out, st = run(['xcodebuild', '-convert-project', 'Xcode Project', '-project', proj, "-IDECustomDerivedDataLocation=#{File.join(File.dirname(proj), '.dd')}"])
     xcproj = File.join(proj, 'project.xcproj')

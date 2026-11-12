@@ -8,9 +8,6 @@ on:
       only_packages:
         description: 'Only projects that use Swift packages (1) or all (0)'
         default: '1'
-      xcodeproj_pr:
-        description: 'CocoaPods/Xcodeproj PR checked alone as label "pr"; empty: none'
-        default: '1057'
       xcodeproj_prs:
         description: 'CocoaPods/Xcodeproj PRs merged onto master, label "xcodeproj" (and "all" with nanaimo_prs); empty: none'
         default: ''
@@ -18,8 +15,8 @@ on:
         description: 'CocoaPods/Nanaimo PRs merged onto master, label "nanaimo" (Xcodeproj master with that Nanaimo); empty: none'
         default: ''
       json_lib:
-        description: 'Label whose Xcodeproj opens the JSON format in the json check (pr, xcodeproj or all); empty: skip'
-        default: 'pr'
+        description: 'Label whose Xcodeproj opens the JSON format in the json check (xcodeproj or all); skipped if that label is absent'
+        default: 'xcodeproj'
 
 permissions:
   contents: read
@@ -47,21 +44,13 @@ jobs:
           ruby-version: '3.4'
       - name: Xcode version
         run: DEVELOPER_DIR="$XCODE_DEVELOPER_DIR" xcodebuild -version
-      - name: Xcodeproj master and PR
-        env:
-          PR: ${{ inputs.xcodeproj_pr }}
+      - name: Xcodeproj master
         run: |
           gem install xcodeproj -v 1.28.1 --no-document   # brings the runtime dependencies
           git clone --quiet https://github.com/CocoaPods/Xcodeproj.git xp
           mkdir -p libs/master
           git -C xp archive master lib | tar -x -C libs/master
           echo "master $(git -C xp rev-parse --short master)"
-          if [ -n "$PR" ]; then
-            git -C xp fetch --quiet origin "pull/${PR}/head:pr"
-            mkdir -p libs/pr
-            git -C xp archive pr lib | tar -x -C libs/pr
-            echo "PR #${PR} $(git -C xp rev-parse --short pr)"
-          fi
       - name: Merge the listed PRs
         # scripts/merge_prs.sh: CHANGELOG.md by union, recorded resolutions from resolutions/, spec-only conflicts keep the side
         # already merged; any other conflict fails the run.
@@ -77,12 +66,11 @@ jobs:
         run: ruby scripts/fetch.rb corpus.tsv corpus
       - name: Run
         # One line per finished project goes to this log; Xcodeproj warnings go to judge.log (in the artifact).
-        # Labels: master; pr; nanaimo (Xcodeproj master + merged Nanaimo); xcodeproj (merged Xcodeproj); all (both merged).
+        # Labels: master; nanaimo (Xcodeproj master + merged Nanaimo); xcodeproj (merged Xcodeproj); all (both merged).
         env:
           JSON_LIB: ${{ inputs.json_lib }}
         run: |
           libs=("master=$PWD/libs/master/lib")
-          [ -d libs/pr ] && libs+=("pr=$PWD/libs/pr/lib")
           [ -d nanaimo ] && libs+=("nanaimo=$PWD/nanaimo/lib:$PWD/libs/master/lib")
           [ -d xp-merged ] && libs+=("xcodeproj=$PWD/xp-merged/lib")
           [ -d nanaimo ] && [ -d xp-merged ] && libs+=("all=$PWD/nanaimo/lib:$PWD/xp-merged/lib")

@@ -18,13 +18,12 @@ Nothing is built, so no project's build scripts run. Resolving Swift packages do
 | Label | Xcodeproj | Nanaimo | When |
 |---|---|---|---|
 | `master` | master | released | always |
-| `pr` | the PR in `xcodeproj_pr` | released | `xcodeproj_pr` is set |
 | `nanaimo` | master | master + `nanaimo_prs` merged | `nanaimo_prs` is set |
 | `xcodeproj` | master + `xcodeproj_prs` merged | released | `xcodeproj_prs` is set |
 | `all` | master + `xcodeproj_prs` merged | master + `nanaimo_prs` merged | both are set |
 
-`json_lib` names the label that runs the `json` check (default `pr`; use `xcodeproj` or `all` when #1057 is in `xcodeproj_prs`). PRs are merged by `scripts/merge_prs.sh`, in the order listed; see [resolutions/](resolutions/README.md) for conflicts.
+`json_lib` names the label that runs the `json` check (default `xcodeproj`; it needs a JSON-capable Xcodeproj, such as #1057 in `xcodeproj_prs`). PRs are merged by `scripts/merge_prs.sh`, in the order listed; see [resolutions/](resolutions/README.md) for conflicts.
 
 Run: Actions → Corpus check → Run workflow. Results are uploaded as artifacts; `ruby scripts/summary.rb <folder>` prints the counts.
 
-Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","pr":"<lib>"}' 4`. A lib may be several load paths joined with `:`, e.g. `"<nanaimo>/lib:<xcodeproj>/lib"`.
+Locally, without packages: `ruby scripts/fetch.rb corpus.tsv corpus`, then `ruby scripts/judge.rb "$PWD/corpus" "$PWD/out" '{"master":"<lib>","xcodeproj":"<lib>"}' 4`. A lib may be several load paths joined with `:`, e.g. `"<nanaimo>/lib:<xcodeproj>/lib"`.
