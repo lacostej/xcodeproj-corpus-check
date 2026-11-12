@@ -13,7 +13,17 @@ For each project in `corpus.tsv` (public `project.pbxproj` files found by GitHub
 
 Nothing is built, so no project's build scripts run. Resolving Swift packages downloads them and evaluates their `Package.swift`, which is why it only happens here, on a disposable runner (`ALLOW_PACKAGES=1`).
 
-`<lib>` is `master` and `pr` (Xcodeproj master and the PR in `xcodeproj_pr`, with the released Nanaimo), plus `nanaimo` when `nanaimo_prs` lists Nanaimo PRs: Xcodeproj master with Nanaimo master and those PRs merged.
+`<lib>` is one label per Xcodeproj and Nanaimo combination:
+
+| Label | Xcodeproj | Nanaimo | When |
+|---|---|---|---|
+| `master` | master | released | always |
+| `pr` | the PR in `xcodeproj_pr` | released | `xcodeproj_pr` is set |
+| `nanaimo` | master | master + `nanaimo_prs` merged | `nanaimo_prs` is set |
+| `xcodeproj` | master + `xcodeproj_prs` merged | released | `xcodeproj_prs` is set |
+| `all` | master + `xcodeproj_prs` merged | master + `nanaimo_prs` merged | both are set |
+
+`json_lib` names the label that runs the `json` check (default `pr`; use `xcodeproj` or `all` when #1057 is in `xcodeproj_prs`). PRs are merged by `scripts/merge_prs.sh`, in the order listed; see [resolutions/](resolutions/README.md) for conflicts.
 
 Run: Actions → Corpus check → Run workflow. Results are uploaded as artifacts; `ruby scripts/summary.rb <folder>` prints the counts.
 
